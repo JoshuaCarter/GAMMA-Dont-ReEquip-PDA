@@ -2,8 +2,14 @@
 	Dorn's Don't Re-Equip PDA
 
 	When the player had the PDA in hand (active slot 8) and opens UI that holsters it,
-	closing that UI normally calls restore_weapon and pulls the PDA back out.
-	This mod remembers that state and holsters again once the engine re-equips it.
+	the engine pulls the PDA back out again once that UI closes (restore_weapon).
+	The engine's weapon state machine can only holster a weapon once it finishes
+	raising (reaches "idle"), so a single reactive holster call after the fact still
+	lets the whole draw animation play out first. To avoid that, this mod starts
+	forcing the PDA back to holstered the moment the relevant UI opens (hidden behind
+	it) and keeps re-forcing it every tick through a short grace window after close,
+	so the re-equip is caught as early as the engine will allow instead of after it's
+	already visible.
 ]]
 
 local MOD_ID = "dorn_dont_reequip_pda"
@@ -96,7 +102,7 @@ end
 local function remember_for(kind)
 	if had_pda_recently() then
 		pending[kind] = true
-		log("remember " .. kind)
+		log("suppressing re-equip from " .. kind .. " open")
 	end
 end
 
@@ -239,15 +245,12 @@ local function on_actor_on_update()
 	for kind, active in pairs(pending) do
 		if active and config_for(kind) then
 			local until_ms = watch_until[kind] or 0
-			if until_ms > 0 then
-				if now > until_ms then
-					log("watch expired for " .. kind)
-					clear_pending(kind)
-				elseif db.actor:active_slot() == PDA_SLOT then
-					log("holster after " .. kind)
-					db.actor:activate_slot(0)
-					clear_pending(kind)
-				end
+			if until_ms > 0 and now > until_ms then
+				log("watch expired for " .. kind)
+				clear_pending(kind)
+			elseif db.actor:active_slot() == PDA_SLOT then
+				log("holster for " .. kind)
+				db.actor:activate_slot(0)
 			end
 		end
 	end
