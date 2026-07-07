@@ -29,7 +29,6 @@ local CONFIG = {
 	after_repair = true,
 	after_pda_map = true,
 	debug_log = false,
-	debug_overlay = false,
 }
 
 local pending = {
@@ -50,17 +49,9 @@ local watch_until = {
 
 local pda_recent_until = 0
 
-local LOG = {
-	STATE = { order = 0, color = "gray" },
-	BLOCK = { order = 1, color = "yellow" },
-}
-
-local function log(slot, msg)
+local function log(msg)
 	if not (DORN and DORN.dbg) then
 		return
-	end
-	if CONFIG.debug_overlay then
-		DORN.dbg.overlay(MOD_ID, slot.order, "[PDA] " .. tostring(msg), slot.color)
 	end
 	if CONFIG.debug_log then
 		DORN.dbg.log(MOD_ID, tostring(msg))
@@ -74,8 +65,6 @@ local function on_option_change()
 	CONFIG.after_repair = DORN.mcm.bool(MOD_ID, "main/after_repair", true)
 	CONFIG.after_pda_map = DORN.mcm.bool(MOD_ID, "main/after_pda_map", true)
 	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
-	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
 end
 
 local function actor_had_pda_out()
@@ -101,13 +90,13 @@ local function begin_watch(kind)
 		return
 	end
 	watch_until[kind] = time_global() + WATCH_MS
-	log(LOG.STATE, "watching re-equip after " .. kind)
+	log("watching re-equip after " .. kind)
 end
 
 local function remember_for(kind)
 	if had_pda_recently() then
 		pending[kind] = true
-		log(LOG.STATE, "remember " .. kind)
+		log("remember " .. kind)
 	end
 end
 
@@ -252,10 +241,10 @@ local function on_actor_on_update()
 			local until_ms = watch_until[kind] or 0
 			if until_ms > 0 then
 				if now > until_ms then
-					log(LOG.STATE, "watch expired for " .. kind)
+					log("watch expired for " .. kind)
 					clear_pending(kind)
 				elseif db.actor:active_slot() == PDA_SLOT then
-					log(LOG.BLOCK, "holster after " .. kind)
+					log("holster after " .. kind)
 					db.actor:activate_slot(0)
 					clear_pending(kind)
 				end
