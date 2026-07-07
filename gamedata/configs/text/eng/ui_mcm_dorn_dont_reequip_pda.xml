@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+	<string id="ui_mcm_menu_dorn_dont_reequip_pda">
+		<text>Dorn's Don't Re-Equip PDA</text>
+	</string>
+	<string id="ui_mcm_dorn_dont_reequip_pda_main_section">
+		<text>Main</text>
+	</string>
+	<string id="ui_mcm_dorn_dont_reequip_pda_development_section">
+		<text>Development</text>
+	</string>
+	<string id="ui_mcm_dorn_dont_reequip_pda_main_description">
+		<text>When enabled, closing the listed UI while you had the PDA in your hands will leave it holstered instead of auto re-equipping it.</text>
+	</string>
+	<string id="ui_mcm_dorn_dont_reequip_pda_after_inventory">
+		<text>After closing inventory</text>
+	</string>
+	<string id="ui_mcm_dorn_dont_reequip_pda_after_loot">
+		<text>After closing loot / body search</text>
+	</string>
+	<string id="ui_mcm_dorn_dont_reequip_pda_after_trade">
+		<text>After closing trade</text>
+	</string>
+	<string id="ui_mcm_dorn_dont_reequip_pda_after_repair">
+		<text>After closing upgrade / repair</text>
+	</string>
+	<string id="ui_mcm_dorn_dont_reequip_pda_after_pda_map">
+		<text>After closing PDA map</text>
+	</string>
+	<string id="ui_mcm_dorn_dont_reequip_pda_debug_log">
+		<text>Debug logging (on-screen)</text>
+	</string>
+</string_table>

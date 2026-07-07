@@ -1,0 +1,69 @@
+function on_mcm_load()
+	return {
+		id = "dorn_dont_reequip_pda",
+		text = "ui_mcm_menu_dorn_dont_reequip_pda",
+		gr = {
+			{
+				id = "main",
+				sh = true,
+				text = "ui_mcm_dorn_dont_reequip_pda_main_section",
+				gr = {
+					{
+						id = "main_description",
+						type = "desc",
+						text = "ui_mcm_dorn_dont_reequip_pda_main_description",
+					},
+					{
+						id = "after_inventory",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_dont_reequip_pda_after_inventory",
+					},
+					{
+						id = "after_loot",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_dont_reequip_pda_after_loot",
+					},
+					{
+						id = "after_trade",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_dont_reequip_pda_after_trade",
+					},
+					{
+						id = "after_repair",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_dont_reequip_pda_after_repair",
+					},
+					{
+						id = "after_pda_map",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_dont_reequip_pda_after_pda_map",
+					},
+				},
+			},
+			{
+				id = "development",
+				sh = true,
+				text = "ui_mcm_dorn_dont_reequip_pda_development_section",
+				gr = {
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_dont_reequip_pda_debug_log",
+					},
+				},
+			},
+		},
+	}
+end
