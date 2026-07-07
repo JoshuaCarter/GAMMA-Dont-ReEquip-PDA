@@ -3,13 +3,22 @@
 
 	When the player had the PDA in hand (active slot 8) and opens UI that holsters it,
 	closing that UI normally calls restore_weapon and pulls the PDA back out.
-	This mod remembers that state and holsters again on the next tick instead.
+	This mod remembers that state and holsters again once the engine re-equips it.
 ]]
 
 local MOD_ID = "dorn_dont_reequip_pda"
-local DORN_COMMON_VERSION = "dorn_common_7367f5e7" -- managed by sync-dorn-common.sh, do not hand-edit
+local DORN_COMMON_VERSION = "dorn_common_3ea88f51" -- managed by sync-dorn-common.sh, do not hand-edit
 
 local PDA_SLOT = 8
+local WATCH_MS = 1500
+local PDA_RECENT_MS = 300
+
+local MODE_TO_KIND = {
+	[1] = "inventory",
+	[2] = "trade",
+	[3] = "repair",
+	[4] = "loot",
+}
 
 local DORN
 
@@ -20,6 +29,7 @@ local CONFIG = {
 	after_repair = true,
 	after_pda_map = true,
 	debug_log = false,
+	debug_overlay = false,
 }
 
 local pending = {
@@ -30,14 +40,30 @@ local pending = {
 	pda_map = false,
 }
 
+local watch_until = {
+	inventory = 0,
+	loot = 0,
+	trade = 0,
+	repair = 0,
+	pda_map = 0,
+}
+
+local pda_recent_until = 0
+
 local LOG = {
 	STATE = { order = 0, color = "gray" },
 	BLOCK = { order = 1, color = "yellow" },
 }
 
 local function log(slot, msg)
-	if DORN and DORN.dbg and CONFIG.debug_log then
-		DORN.dbg.write(MOD_ID, slot.order, "[PDA] " .. tostring(msg), slot.color)
+	if not (DORN and DORN.dbg) then
+		return
+	end
+	if CONFIG.debug_overlay then
+		DORN.dbg.overlay(MOD_ID, slot.order, "[PDA] " .. tostring(msg), slot.color)
+	end
+	if CONFIG.debug_log then
+		DORN.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
@@ -48,43 +74,58 @@ local function on_option_change()
 	CONFIG.after_repair = DORN.mcm.bool(MOD_ID, "main/after_repair", true)
 	CONFIG.after_pda_map = DORN.mcm.bool(MOD_ID, "main/after_pda_map", true)
 	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
-	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_log)
+	CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
+	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
 end
 
 local function actor_had_pda_out()
 	return db.actor and db.actor:active_slot() == PDA_SLOT
 end
 
+local function had_pda_recently()
+	return actor_had_pda_out() or time_global() < pda_recent_until
+end
+
+local function config_for(kind)
+	return CONFIG["after_" .. kind]
+end
+
+local function clear_pending(kind)
+	pending[kind] = false
+	watch_until[kind] = 0
+end
+
+local function begin_watch(kind)
+	if not pending[kind] or not config_for(kind) then
+		clear_pending(kind)
+		return
+	end
+	watch_until[kind] = time_global() + WATCH_MS
+	log(LOG.STATE, "watching re-equip after " .. kind)
+end
+
 local function remember_for(kind)
-	if actor_had_pda_out() then
+	if had_pda_recently() then
 		pending[kind] = true
 		log(LOG.STATE, "remember " .. kind)
 	end
 end
 
-local function should_block(kind)
-	local key = "after_" .. kind
-	return pending[kind] and CONFIG[key]
-end
-
-local function clear_pending(kind)
-	pending[kind] = false
-end
-
-local function holster_pda_if_needed(kind)
-	if not should_block(kind) then
-		clear_pending(kind)
+local function on_actor_menu_mode_changed(mode, last_mode)
+	if mode ~= 0 and last_mode == 0 then
+		local kind = MODE_TO_KIND[mode]
+		if kind then
+			remember_for(kind)
+		end
 		return
 	end
 
-	CreateTimeEvent(MOD_ID, "holster_" .. kind, 0, function()
-		if db.actor and db.actor:active_slot() == PDA_SLOT then
-			log(LOG.BLOCK, "holster after " .. kind)
-			db.actor:activate_slot(0)
+	if mode == 0 then
+		local kind = MODE_TO_KIND[last_mode]
+		if kind then
+			begin_watch(kind)
 		end
-		clear_pending(kind)
-		return true
-	end)
+	end
 end
 
 local function on_actor_menu_before_init_mode(mode_str)
@@ -117,28 +158,28 @@ local function patch_actor_menu()
 		if orig_actor_menu.inventory_wnd_closed then
 			orig_actor_menu.inventory_wnd_closed()
 		end
-		holster_pda_if_needed("inventory")
+		begin_watch("inventory")
 	end
 
 	function actor_menu.dead_body_search_wnd_closed()
 		if orig_actor_menu.dead_body_search_wnd_closed then
 			orig_actor_menu.dead_body_search_wnd_closed()
 		end
-		holster_pda_if_needed("loot")
+		begin_watch("loot")
 	end
 
 	function actor_menu.trade_wnd_closed()
 		if orig_actor_menu.trade_wnd_closed then
 			orig_actor_menu.trade_wnd_closed()
 		end
-		holster_pda_if_needed("trade")
+		begin_watch("trade")
 	end
 
 	function actor_menu.upgrade_wnd_closed()
 		if orig_actor_menu.upgrade_wnd_closed then
 			orig_actor_menu.upgrade_wnd_closed()
 		end
-		holster_pda_if_needed("repair")
+		begin_watch("repair")
 	end
 end
 
@@ -153,12 +194,25 @@ local function toggle_pda_map_close()
 	end
 
 	if pda_menu:IsShown() and pending.pda_map then
-		holster_pda_if_needed("pda_map")
+		begin_watch("pda_map")
 	end
 end
 
 local function on_key_press(key)
-	if key == DIK_keys.DIK_ESCAPE or dik_to_bind(key) == 51 then
+	local bind = dik_to_bind(key)
+
+	if bind == key_bindings.kINVENTORY then
+		if actor_had_pda_out() then
+			remember_for("inventory")
+		elseif actor_menu and actor_menu.last_mode == 1 and pending.inventory then
+			begin_watch("inventory")
+		end
+	end
+
+	if key == DIK_keys.DIK_ESCAPE or bind == 51 then
+		if actor_menu and actor_menu.last_mode == 1 and pending.inventory then
+			begin_watch("inventory")
+		end
 		toggle_pda_map_close()
 	end
 end
@@ -180,17 +234,49 @@ local function on_key_release(key)
 	end
 end
 
+local function on_actor_on_update()
+	local ctx = DORN.sys.ready(MOD_ID, db, on_option_change)
+	if not ctx or not db.actor then
+		return
+	end
+
+	patch_actor_menu()
+
+	if db.actor:active_slot() == PDA_SLOT then
+		pda_recent_until = time_global() + PDA_RECENT_MS
+	end
+
+	local now = time_global()
+	for kind, active in pairs(pending) do
+		if active and config_for(kind) then
+			local until_ms = watch_until[kind] or 0
+			if until_ms > 0 then
+				if now > until_ms then
+					log(LOG.STATE, "watch expired for " .. kind)
+					clear_pending(kind)
+				elseif db.actor:active_slot() == PDA_SLOT then
+					log(LOG.BLOCK, "holster after " .. kind)
+					db.actor:activate_slot(0)
+					clear_pending(kind)
+				end
+			end
+		end
+	end
+end
+
 function on_game_start()
 	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
 
-	for k in pairs(pending) do
-		pending[k] = false
+	for kind in pairs(pending) do
+		clear_pending(kind)
 	end
 
 	patch_actor_menu()
 
 	RegisterScriptCallback("ActorMenu_on_before_init_mode", on_actor_menu_before_init_mode)
+	RegisterScriptCallback("ActorMenu_on_mode_changed", on_actor_menu_mode_changed)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("on_key_release", on_key_release)
+	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 end

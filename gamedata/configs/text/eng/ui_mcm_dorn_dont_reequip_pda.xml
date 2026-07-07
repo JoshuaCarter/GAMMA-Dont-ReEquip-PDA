@@ -27,7 +27,10 @@
 	<string id="ui_mcm_dorn_dont_reequip_pda_after_pda_map">
 		<text>After closing PDA map</text>
 	</string>
+	<string id="ui_mcm_dorn_dont_reequip_pda_debug_overlay">
+		<text>Enable debug overlay</text>
+	</string>
 	<string id="ui_mcm_dorn_dont_reequip_pda_debug_log">
-		<text>Debug logging (on-screen)</text>
+		<text>Enable debug logging</text>
 	</string>
 </string_table>
