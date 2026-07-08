@@ -2,6 +2,10 @@
 
 Stops the game from automatically pulling the PDA back out after you close UI that temporarily holstered it.
 
+## Demo
+
+https://github.com/JoshuaCarter/GAMMA-Dont-ReEquip-PDA/raw/main/pda-go-away.mp4
+
 ## What this mod does
 
 - If you had the PDA in your hands and open inventory, closing inventory leaves the PDA holstered instead of re-equipping it
