@@ -1,23 +1,63 @@
 --[[
 	Dorn's Don't Re-Equip PDA
 
-	When the player had the PDA in hand (active slot 8) and opens UI that holsters it,
-	the engine pulls the PDA back out again once that UI closes (restore_weapon).
-	The engine's weapon state machine can only holster a weapon once it finishes
-	raising (reaches "idle"), so a single reactive holster call after the fact still
-	lets the whole draw animation play out first. To avoid that, this mod starts
-	forcing the PDA back to holstered the moment the relevant UI opens (hidden behind
-	it) and keeps re-forcing it every tick through a short grace window after close,
-	so the re-equip is caught as early as the engine will allow instead of after it's
-	already visible.
+	When the player had the PDA in hand (active slot 8) and opens UI that
+	holsters it, the PDA gets pulled back out again once that UI closes.
+
+	What we know, from direct testing with debug logging enabled:
+	1. Reactively holstering after the PDA starts re-raising can only ever cut
+	   the animation short, never eliminate it - the engine will not accept a
+	   holster call until the raise it's already playing finishes. This is
+	   true no matter how early/often we react, so no reactive approach can
+	   ever produce zero animation.
+	2. Holstering to bare hands (activate_slot(0)) as early as physically
+	   possible - on the raw key press, strictly before the engine had even
+	   begun acting on it - does NOT stop the re-equip. Debug logging showed
+	   active_slot flipping back to 8 on its own, 1.7-1.9 seconds after the
+	   inventory closed, with zero script/engine events firing in between (no
+	   ActorMenu_* callback, no key press, nothing). So whatever remembers
+	   "what to restore" is not simply reading whatever active_slot happened
+	   to be right before the UI opened - activate_slot(0) doesn't appear to
+	   update it at all.
+	3. Manually pressing a real weapon-select key (e.g. "1" for the primary
+	   weapon) while the UI is closing DOES stick - the primary weapon stays
+	   out, the PDA does not come back. So whatever is remembered CAN be
+	   overridden, just not by activate_slot(0) - only by activating an actual
+	   weapon slot. Slot 0 (bare hands) apparently isn't treated as a "real"
+	   selection worth remembering, but any other slot is.
+	Putting 1-3 together: instead of holstering the PDA to bare hands, we
+	holster it to whatever slot the player actually had equipped right before
+	the PDA became active - a real weapon-select call, not a bare-hands one.
+	   That includes primary/secondary weapons (slots 1-2), knife (slot 3),
+	   and binoculars (slot 4). On UI open, if the
+	PDA is still in hand we switch immediately; on UI close, active_slot is
+	often already 0 (the UI holstered everything), so we also preemptively
+	restore the remembered slot when we know the PDA was involved - otherwise
+	the engine's delayed restore puts the PDA back ~1-2s later.
+
+	This never moves the item itself (only ever calls activate_slot), so it
+	can safely run at any UI-open/close event without risk of tripping the
+	live-inventory crash in a separate mod ("Inventory Open Lag Reducer" +
+	"SortingPlus", "attempt to compare number with nil") that we hit while an
+	earlier version of this mod physically moved the PDA in and out of the
+	ruck.
+
+	Separately: "Previous weapon is automatically pulled after closing PDA"
+	(Demonized) explicitly schedules db.actor:activate_slot(previous_slot) one
+	tick after the PDA map closes. When the PDA itself was active before
+	opening the map, that deliberately re-equips it a tick after we holster
+	it - no amount of reacting faster on our side beats a call that always
+	runs strictly after ours. This mod patches that mod's toggle_pda function
+	to skip the restore specifically when it would put the PDA back in hand,
+	while leaving its "restore whatever other weapon you had out" behavior
+	intact. This is a real, concrete, always-on fix (not a guess) because we
+	know exactly which function does the re-equip and call it out by name.
 ]]
 
 local MOD_ID = "dorn_dont_reequip_pda"
-local DORN_COMMON_VERSION = "dorn_common_105895da" -- managed by sync-dorn-common.sh, do not hand-edit
+local DORN_COMMON_VERSION = "dorn_common_f575cc9b" -- managed by sync-dorn-common.sh, do not hand-edit
 
 local PDA_SLOT = 8
-local WATCH_MS = 1500
-local PDA_RECENT_MS = 300
 
 local MODE_TO_KIND = {
 	[1] = "inventory",
@@ -37,24 +77,6 @@ local CONFIG = {
 	debug_log = false,
 }
 
-local pending = {
-	inventory = false,
-	loot = false,
-	trade = false,
-	repair = false,
-	pda_map = false,
-}
-
-local watch_until = {
-	inventory = 0,
-	loot = 0,
-	trade = 0,
-	repair = 0,
-	pda_map = 0,
-}
-
-local pda_recent_until = 0
-
 local function log(msg)
 	if not (DORN and DORN.dbg) then
 		return
@@ -64,53 +86,151 @@ local function log(msg)
 	end
 end
 
+local function mcm_check(key, default)
+	-- Anomaly MCM checkboxes (val = 1) store 1/0, not true/false; DORN.mcm.bool
+	-- only accepts == true so enabled options would read as disabled.
+	local v = DORN.mcm.get(MOD_ID, key, default)
+	if v == nil then
+		return default
+	end
+	return v == true or v == 1
+end
+
 local function on_option_change()
-	CONFIG.after_inventory = DORN.mcm.bool(MOD_ID, "main/after_inventory", true)
-	CONFIG.after_loot = DORN.mcm.bool(MOD_ID, "main/after_loot", true)
-	CONFIG.after_trade = DORN.mcm.bool(MOD_ID, "main/after_trade", true)
-	CONFIG.after_repair = DORN.mcm.bool(MOD_ID, "main/after_repair", true)
-	CONFIG.after_pda_map = DORN.mcm.bool(MOD_ID, "main/after_pda_map", true)
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.after_inventory = mcm_check("main/after_inventory", true)
+	CONFIG.after_loot = mcm_check("main/after_loot", true)
+	CONFIG.after_trade = mcm_check("main/after_trade", true)
+	CONFIG.after_repair = mcm_check("main/after_repair", true)
+	CONFIG.after_pda_map = mcm_check("main/after_pda_map", true)
+	CONFIG.debug_log = mcm_check("development/debug_log", false)
+	log(string.format(
+		"config: inventory=%s loot=%s trade=%s repair=%s pda_map=%s debug=%s",
+		tostring(CONFIG.after_inventory), tostring(CONFIG.after_loot), tostring(CONFIG.after_trade),
+		tostring(CONFIG.after_repair), tostring(CONFIG.after_pda_map), tostring(CONFIG.debug_log)
+	))
 end
 
 local function actor_had_pda_out()
 	return db.actor and db.actor:active_slot() == PDA_SLOT
 end
 
-local function had_pda_recently()
-	return actor_had_pda_out() or time_global() < pda_recent_until
-end
-
 local function config_for(kind)
 	return CONFIG["after_" .. kind]
 end
 
-local function clear_pending(kind)
-	pending[kind] = false
-	watch_until[kind] = 0
+-- Continuously tracks the last real equip slot (guns, knife, binoc) so we
+-- know what to restore instead of bare hands. slot_before_pda is captured
+-- when active_slot transitions to the PDA, so gun -> PDA -> inventory ->
+-- close restores the gun even if holstering briefly passes through
+-- active_slot 0 in between.
+local last_non_pda_slot = 0
+local slot_before_pda = nil
+local pda_holstered_for_ui = false
+local restore_slot_for_ui = nil
+
+local function slot_has_item(slot)
+	return slot and db.actor and db.actor:item_in_slot(slot) ~= nil
 end
 
-local function begin_watch(kind)
-	if not pending[kind] or not config_for(kind) then
-		clear_pending(kind)
+local function inventory_slot_for_active_item()
+	local active = db.actor:active_item()
+	if not active then
+		return nil
+	end
+	local active_id = active:id()
+	for s = 1, 7 do
+		if s ~= PDA_SLOT then
+			local item = db.actor:item_in_slot(s)
+			if item and item:id() == active_id then
+				return s
+			end
+		end
+	end
+	return nil
+end
+
+local function remember_non_pda_slot(slot)
+	if not slot or slot == PDA_SLOT then
 		return
 	end
-	watch_until[kind] = time_global() + WATCH_MS
-	log("watching re-equip after " .. kind)
+	if slot ~= 0 then
+		last_non_pda_slot = slot
+		return
+	end
+	local item_slot = inventory_slot_for_active_item()
+	if item_slot then
+		last_non_pda_slot = item_slot
+	end
 end
 
-local function remember_for(kind)
-	if had_pda_recently() then
-		pending[kind] = true
-		log("suppressing re-equip from " .. kind .. " open")
+local function capture_slot_before_pda(from_slot)
+	if from_slot and from_slot ~= PDA_SLOT and from_slot ~= 0 and slot_has_item(from_slot) then
+		slot_before_pda = from_slot
+		return
 	end
+	if last_non_pda_slot ~= 0 and slot_has_item(last_non_pda_slot) then
+		slot_before_pda = last_non_pda_slot
+	end
+end
+
+local function restore_slot_after_pda()
+	if slot_before_pda and slot_has_item(slot_before_pda) then
+		return slot_before_pda
+	end
+	if last_non_pda_slot ~= 0 and slot_has_item(last_non_pda_slot) then
+		return last_non_pda_slot
+	end
+	-- Primary/secondary guns first, then knife/binoculars - fallback only when
+	-- slot_before_pda was not captured.
+	for _, s in ipairs({ 1, 2, 3, 4 }) do
+		if slot_has_item(s) then
+			return s
+		end
+	end
+	return 0
+end
+
+local function holster_pda_for(kind, site, on_close)
+	if not db.actor then
+		log(string.format("holster_pda_for(%s) from %s: skipped, no db.actor", kind, site))
+		return
+	end
+	if not config_for(kind) then
+		log(string.format("holster_pda_for(%s) from %s: skipped, config disabled", kind, site))
+		return
+	end
+	local slot = db.actor:active_slot()
+	local target = restore_slot_after_pda()
+	if slot == PDA_SLOT then
+		log(string.format(
+			"holster_pda_for(%s) from %s: active_slot=%s -> activate_slot(%s) (slot_before_pda=%s, last_non_pda_slot=%s)",
+			kind, site, slot, target, tostring(slot_before_pda), tostring(last_non_pda_slot)
+		))
+		db.actor:activate_slot(target)
+		restore_slot_for_ui = target
+		pda_holstered_for_ui = true
+		return
+	end
+	if on_close and pda_holstered_for_ui and restore_slot_for_ui and restore_slot_for_ui ~= 0 then
+		log(string.format(
+			"holster_pda_for(%s) from %s: preempt active_slot=%s -> activate_slot(%s) (restore_slot_for_ui)",
+			kind, site, tostring(slot), restore_slot_for_ui
+		))
+		db.actor:activate_slot(restore_slot_for_ui)
+		pda_holstered_for_ui = false
+		restore_slot_for_ui = nil
+		return
+	end
+	log(string.format("holster_pda_for(%s) from %s: active_slot=%s, nothing to holster", kind, site, tostring(slot)))
 end
 
 local function on_actor_menu_mode_changed(mode, last_mode)
+	log(string.format("ActorMenu_on_mode_changed: mode=%s last_mode=%s", tostring(mode), tostring(last_mode)))
+
 	if mode ~= 0 and last_mode == 0 then
 		local kind = MODE_TO_KIND[mode]
 		if kind then
-			remember_for(kind)
+			holster_pda_for(kind, "mode_changed(open)")
 		end
 		return
 	end
@@ -118,20 +238,63 @@ local function on_actor_menu_mode_changed(mode, last_mode)
 	if mode == 0 then
 		local kind = MODE_TO_KIND[last_mode]
 		if kind then
-			begin_watch(kind)
+			holster_pda_for(kind, "mode_changed(close)", true)
 		end
 	end
 end
 
 local function on_actor_menu_before_init_mode(mode_str)
-	if mode_str == "inventory" then
-		remember_for("inventory")
-	elseif mode_str == "loot" then
-		remember_for("loot")
-	elseif mode_str == "trade" then
-		remember_for("trade")
-	elseif mode_str == "repair" then
-		remember_for("repair")
+	log("ActorMenu_on_before_init_mode: " .. tostring(mode_str))
+	if mode_str == "inventory" or mode_str == "loot" or mode_str == "trade" or mode_str == "repair" then
+		holster_pda_for(mode_str, "before_init_mode")
+	end
+end
+
+local pda_to_previous_weapon_patched = false
+
+local function patch_pda_to_previous_weapon()
+	if pda_to_previous_weapon_patched or not _G.toggle_pda then
+		return
+	end
+	pda_to_previous_weapon_patched = true
+	log("patched conflicting pda_to_previous_weapon.toggle_pda")
+
+	-- "Previous weapon is automatically pulled after closing PDA" (Demonized)
+	-- schedules db.actor:activate_slot(previous_slot) one tick after the PDA
+	-- map closes. When the PDA itself was the active item, previous_slot is 8,
+	-- so it deliberately re-equips the PDA a tick after we holster it - no
+	-- amount of reacting faster on our side can beat a call that runs strictly
+	-- after ours. Reimplement it here, skipping the restore when it would put
+	-- the PDA back in hand.
+	local previous_slot
+
+	_G.toggle_pda = function()
+		local pda3d = get_console_cmd(1, "g_3d_pda")
+		if not pda3d then
+			return
+		end
+
+		local pda_menu = ActorMenu.get_pda_menu()
+		if not pda_menu then
+			return
+		end
+
+		if not pda_menu:IsShown() and db.actor and db.actor:item_in_slot(PDA_SLOT) then
+			previous_slot = db.actor:active_slot()
+		elseif pda_menu:IsShown() and previous_slot then
+			local slot_to_restore = previous_slot
+			previous_slot = nil
+
+			if config_for("pda_map") and slot_to_restore == PDA_SLOT then
+				log("blocked pda_to_previous_weapon re-equip")
+				return
+			end
+
+			CreateTimeEvent("pda_restore_slot", "pda_restore_slot", 0, function()
+				db.actor:activate_slot(slot_to_restore)
+				return true
+			end)
+		end
 	end
 end
 
@@ -150,31 +313,35 @@ local function patch_actor_menu()
 	orig_actor_menu.upgrade_wnd_closed = actor_menu.upgrade_wnd_closed
 
 	function actor_menu.inventory_wnd_closed()
+		log("actor_menu.inventory_wnd_closed fired")
 		if orig_actor_menu.inventory_wnd_closed then
 			orig_actor_menu.inventory_wnd_closed()
 		end
-		begin_watch("inventory")
+		holster_pda_for("inventory", "wnd_closed", true)
 	end
 
 	function actor_menu.dead_body_search_wnd_closed()
+		log("actor_menu.dead_body_search_wnd_closed fired")
 		if orig_actor_menu.dead_body_search_wnd_closed then
 			orig_actor_menu.dead_body_search_wnd_closed()
 		end
-		begin_watch("loot")
+		holster_pda_for("loot", "wnd_closed", true)
 	end
 
 	function actor_menu.trade_wnd_closed()
+		log("actor_menu.trade_wnd_closed fired")
 		if orig_actor_menu.trade_wnd_closed then
 			orig_actor_menu.trade_wnd_closed()
 		end
-		begin_watch("trade")
+		holster_pda_for("trade", "wnd_closed", true)
 	end
 
 	function actor_menu.upgrade_wnd_closed()
+		log("actor_menu.upgrade_wnd_closed fired")
 		if orig_actor_menu.upgrade_wnd_closed then
 			orig_actor_menu.upgrade_wnd_closed()
 		end
-		begin_watch("repair")
+		holster_pda_for("repair", "wnd_closed", true)
 	end
 end
 
@@ -184,12 +351,8 @@ local function toggle_pda_map_close()
 	end
 
 	local pda_menu = ActorMenu.get_pda_menu()
-	if not pda_menu then
-		return
-	end
-
-	if pda_menu:IsShown() and pending.pda_map then
-		begin_watch("pda_map")
+	if pda_menu and pda_menu:IsShown() then
+		holster_pda_for("pda_map", "toggle_pda_map_close")
 	end
 end
 
@@ -197,17 +360,14 @@ local function on_key_press(key)
 	local bind = dik_to_bind(key)
 
 	if bind == key_bindings.kINVENTORY then
+		log(string.format("on_key_press: kINVENTORY, active_slot=%s", tostring(db.actor and db.actor:active_slot())))
 		if actor_had_pda_out() then
-			remember_for("inventory")
-		elseif actor_menu and actor_menu.last_mode == 1 and pending.inventory then
-			begin_watch("inventory")
+			holster_pda_for("inventory", "key_press(kINVENTORY)")
 		end
 	end
 
 	if key == DIK_keys.DIK_ESCAPE or bind == 51 then
-		if actor_menu and actor_menu.last_mode == 1 and pending.inventory then
-			begin_watch("inventory")
-		end
+		log("on_key_press: ESCAPE/menu-close bind")
 		toggle_pda_map_close()
 	end
 end
@@ -222,11 +382,38 @@ local function on_key_release(key)
 		return
 	end
 
+	log(string.format("on_key_release: kCUSTOM20 (pda map key), pda_menu shown=%s", tostring(pda_menu:IsShown())))
+
 	if not pda_menu:IsShown() and actor_had_pda_out() then
-		remember_for("pda_map")
+		holster_pda_for("pda_map", "key_release(kCUSTOM20 open)")
 	elseif pda_menu:IsShown() then
 		toggle_pda_map_close()
 	end
+end
+
+-- Tick-accurate diagnostic + restore-slot tracking: logs every time
+-- active_slot actually changes, captures slot_before_pda when the PDA is
+-- pulled out, and remembers real equip slots without letting transient
+-- holster-to-0 states wipe knife/binoc/weapon memory.
+local last_seen_slot = nil
+
+local function log_active_slot_transitions()
+	local slot = db.actor:active_slot()
+	if slot == last_seen_slot then
+		return
+	end
+	if slot == PDA_SLOT then
+		capture_slot_before_pda(last_seen_slot)
+	elseif last_seen_slot == PDA_SLOT then
+		slot_before_pda = nil
+	end
+	log(string.format(
+		"active_slot changed: %s -> %s (tick=%s, actor_menu.last_mode=%s, slot_before_pda=%s, last_non_pda_slot=%s)",
+		tostring(last_seen_slot), tostring(slot), tostring(time_global()),
+		tostring(actor_menu and actor_menu.last_mode), tostring(slot_before_pda), tostring(last_non_pda_slot)
+	))
+	last_seen_slot = slot
+	remember_non_pda_slot(slot)
 end
 
 local function on_actor_on_update()
@@ -236,34 +423,22 @@ local function on_actor_on_update()
 	end
 
 	patch_actor_menu()
-
-	if db.actor:active_slot() == PDA_SLOT then
-		pda_recent_until = time_global() + PDA_RECENT_MS
-	end
-
-	local now = time_global()
-	for kind, active in pairs(pending) do
-		if active and config_for(kind) then
-			local until_ms = watch_until[kind] or 0
-			if until_ms > 0 and now > until_ms then
-				log("watch expired for " .. kind)
-				clear_pending(kind)
-			elseif db.actor:active_slot() == PDA_SLOT then
-				log("holster for " .. kind)
-				db.actor:activate_slot(0)
-			end
-		end
-	end
+	patch_pda_to_previous_weapon()
+	log_active_slot_transitions()
 end
 
 function on_game_start()
 	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
 
-	for kind in pairs(pending) do
-		clear_pending(kind)
-	end
+	-- Not gated by CONFIG.debug_log: at this point MCM options haven't been
+	-- read yet (that happens later via on_option_change), so the gate would
+	-- always be closed here regardless of the user's actual setting.
+	DORN.dbg.log(MOD_ID, "on_game_start: mod loaded, _G.toggle_pda present=" .. tostring(_G.toggle_pda ~= nil))
+
+	on_option_change()
 
 	patch_actor_menu()
+	patch_pda_to_previous_weapon()
 
 	RegisterScriptCallback("ActorMenu_on_before_init_mode", on_actor_menu_before_init_mode)
 	RegisterScriptCallback("ActorMenu_on_mode_changed", on_actor_menu_mode_changed)
