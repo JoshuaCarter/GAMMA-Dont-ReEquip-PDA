@@ -71,28 +71,14 @@ local function log(msg)
 	end
 end
 
-local function mcm_check(key, default)
-	-- Anomaly MCM checkboxes (val = 1) store 1/0, not true/false; DORN.mcm.bool
-	-- only accepts == true so enabled options would read as disabled.
-	local v = DORN.mcm.get(MOD_ID, key, default)
-	if v == nil then
-		return default
-	end
-	return v == true or v == 1
-end
-
 local function on_option_change()
-	CONFIG.after_inventory = mcm_check("main/after_inventory", true)
-	CONFIG.after_loot = mcm_check("main/after_loot", true)
-	CONFIG.debug_log = mcm_check("development/debug_log", false)
+	CONFIG.after_inventory = DORN.mcm.bool(MOD_ID, "main/after_inventory", true)
+	CONFIG.after_loot = DORN.mcm.bool(MOD_ID, "main/after_loot", true)
+	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
 	log(string.format(
 		"config: inventory=%s loot=%s debug=%s",
 		tostring(CONFIG.after_inventory), tostring(CONFIG.after_loot), tostring(CONFIG.debug_log)
 	))
-end
-
-local function actor_had_pda_out()
-	return db.actor and db.actor:active_slot() == PDA_SLOT
 end
 
 local function config_for(kind)
@@ -266,7 +252,7 @@ local function on_key_press(key)
 	end
 
 	log(string.format("on_key_press: kINVENTORY, active_slot=%s", tostring(db.actor and db.actor:active_slot())))
-	if actor_had_pda_out() then
+	if db.actor and db.actor:active_slot() == PDA_SLOT then
 		holster_pda_for("inventory", "key_press(kINVENTORY)")
 	end
 end
