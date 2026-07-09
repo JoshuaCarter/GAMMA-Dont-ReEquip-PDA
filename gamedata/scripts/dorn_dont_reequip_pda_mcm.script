@@ -27,6 +27,13 @@ function on_mcm_load()
 						def = true,
 						hint = "dorn_dont_reequip_pda_after_loot",
 					},
+					{
+						id = "after_teleport",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_dont_reequip_pda_after_teleport",
+					},
 				},
 			},
 			{
