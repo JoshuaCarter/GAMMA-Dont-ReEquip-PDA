@@ -1,4 +1,4 @@
-# Dorn's Don't Re-Equip PDA
+# Dorn's Don't Re-Equip PDA v0.1.3
 
 Stops the game from automatically pulling the PDA back out after you close UI that temporarily holstered it.
 
@@ -8,5 +8,16 @@ https://github.com/user-attachments/assets/f2566359-d224-46b0-a4bb-b8d6f2b313e7
 
 ## Installation
 
-1. Download the latest release from [GAMMA-Dont-ReEquip-PDA](https://github.com/JoshuaCarter/GAMMA-Dont-ReEquip-PDA/releases)
+1. Download the latest release from https://github.com/JoshuaCarter/GAMMA-Dont-ReEquip-PDA/releases
 2. Install via MO2 like normal
+
+## Other mods
+
+- https://github.com/JoshuaCarter/GAMMA-Faster-Skinning
+- https://github.com/JoshuaCarter/GAMMA-Field-Strip-All-Keybind
+- https://github.com/JoshuaCarter/GAMMA-FPS-Counter
+- https://github.com/JoshuaCarter/GAMMA-Giant-Jump
+- https://github.com/JoshuaCarter/GAMMA-Optimal-Tool-Use
+- https://github.com/JoshuaCarter/GAMMA-Prone-Fix
+- https://github.com/JoshuaCarter/GAMMA-Radiation-Grain-Fix
+- https://github.com/JoshuaCarter/GAMMA-Tooltip-Weapon-Damage
