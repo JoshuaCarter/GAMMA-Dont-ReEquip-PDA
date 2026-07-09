@@ -18,15 +18,6 @@
 	<string id="ui_mcm_dorn_dont_reequip_pda_after_loot">
 		<text>After closing loot / body search</text>
 	</string>
-	<string id="ui_mcm_dorn_dont_reequip_pda_after_trade">
-		<text>After closing trade</text>
-	</string>
-	<string id="ui_mcm_dorn_dont_reequip_pda_after_repair">
-		<text>After closing upgrade / repair</text>
-	</string>
-	<string id="ui_mcm_dorn_dont_reequip_pda_after_pda_map">
-		<text>After closing PDA map</text>
-	</string>
 	<string id="ui_mcm_dorn_dont_reequip_pda_debug_log">
 		<text>Enable debug logging</text>
 	</string>
