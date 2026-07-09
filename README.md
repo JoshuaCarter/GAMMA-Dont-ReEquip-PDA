@@ -1,4 +1,4 @@
-# Dorn's Don't Re-Equip PDA v0.1.3
+# Dorn's Don't Re-Equip PDA v0.1.4
 
 Stops the game from automatically pulling the PDA back out after you close UI that temporarily holstered it.
 
