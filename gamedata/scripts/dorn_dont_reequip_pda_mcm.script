@@ -8,6 +8,7 @@ end
 
 
 
+
 function on_mcm_load()
 	local MCM = dorn_mcm()
 	return {
@@ -45,7 +46,7 @@ function on_mcm_load()
 						def = true,
 						hint = "dorn_dont_reequip_pda_after_teleport",
 					},
-				},
+				}),
 			},
 			{
 				id = "development",
@@ -59,7 +60,7 @@ function on_mcm_load()
 						def = false,
 						hint = "dorn_dont_reequip_pda_debug_log",
 					},
-				},
+				}),
 			},
 		},
 	}
